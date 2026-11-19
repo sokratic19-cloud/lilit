@@ -1,0 +1,1050 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>СКЕЙТ-ГЕРОЙ — платформер на скейте</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Russo+One&family=Rubik:wght@400;600;800&display=swap" rel="stylesheet">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { height:100%; }
+  body {
+    font-family:'Rubik',sans-serif;
+    background:
+      radial-gradient(1100px 600px at 72% -10%, #3b2a63 0%, transparent 60%),
+      radial-gradient(900px 520px at 8% 112%, #64273f 0%, transparent 55%),
+      #171126;
+    display:grid; place-items:center; overflow:hidden;
+    user-select:none; -webkit-user-select:none;
+  }
+  body::before {
+    content:""; position:fixed; inset:-60%;
+    background:repeating-linear-gradient(115deg, rgba(255,255,255,.022) 0 3px, transparent 3px 30px);
+    animation:drift 60s linear infinite; pointer-events:none;
+  }
+  @keyframes drift { to { transform:translate(220px,140px); } }
+  #wrap { position:relative; }
+  canvas {
+    display:block;
+    width:min(96vw, calc((100vh - 70px) * 16 / 9));
+    aspect-ratio:16/9;
+    border:4px solid #2c2447; border-radius:12px;
+    box-shadow:0 30px 80px rgba(0,0,0,.65), 0 0 0 1px rgba(255,255,255,.06), 0 0 110px rgba(255,124,86,.14);
+    touch-action:none;
+  }
+  #hint {
+    position:absolute; left:0; right:0; bottom:-30px; text-align:center;
+    color:rgba(255,235,220,.4); font-size:12px; letter-spacing:.6px;
+  }
+  #touch { display:none; position:fixed; inset:auto 0 0 0; padding:14px 18px;
+    justify-content:space-between; pointer-events:none; z-index:5; }
+  body.touch #touch { display:flex; }
+  .tbtn {
+    pointer-events:auto; width:70px; height:70px; border-radius:50%;
+    border:2px solid rgba(255,255,255,.35); background:rgba(30,20,55,.5);
+    color:#ffd9a0; font:800 22px 'Rubik'; display:grid; place-items:center;
+    touch-action:none; backdrop-filter:blur(2px);
+  }
+  .tbtn:active { background:rgba(255,150,90,.45); }
+  .tgroup { display:flex; gap:12px; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="game" width="960" height="540"></canvas>
+  <div id="hint">← → — ехать · ПРОБЕЛ — прыжок · S — трюк в воздухе · P — пауза · M — звук · R — заново</div>
+</div>
+<div id="touch">
+  <div class="tgroup"><div class="tbtn" id="bl">◀</div><div class="tbtn" id="br">▶</div></div>
+  <div class="tgroup"><div class="tbtn" id="bt">ТРЮК</div><div class="tbtn" id="bj">ПРЫГ</div></div>
+</div>
+
+<script>
+'use strict';
+// ============================================================
+//  СКЕЙТ-ГЕРОЙ — платформер про человечка на скейте
+// ============================================================
+const cv = document.getElementById('game');
+const ctx = cv.getContext('2d');
+const VW = 960, VH = 540, TILE = 40;
+const STEP = 1/60;
+
+// ---------- УТИЛИТЫ ----------
+const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
+const lerp  = (a,b,t)=>a+(b-a)*t;
+const rnd   = (a=1,b)=> b===undefined ? Math.random()*a : a+Math.random()*(b-a);
+const _s    = n=>' '.repeat(n); // помощник для карты
+
+// ---------- КАРТА УРОВНЯ ----------
+// X — бетон, B — блок, - — перила, o — колесо, T — шина, K — конус,
+// A — рампа-пружина, C — чекпоинт, F — финиш, p — пальма, P — старт
+const ROWS = [
+'', '', '', '', '', '',
+_s(102)+'oooo',
+_s(46)+'ooo',
+_s(45)+'BBBBB'+_s(51)+'BBBBBB',
+_s(53)+'o'+_s(1)+'o',
+_s(28)+'o'+_s(1)+'o'+_s(1)+'o'+_s(46)+'o'+_s(1)+'o'+_s(1)+'o'+_s(1)+'o'+_s(5)+'BB'
+  +_s(34)+'o'+_s(5)+'o'+_s(10)+'o'+_s(1)+'o'+_s(1)+'o'+_s(1)+'o',
+_s(27)+'-------'+_s(19)+'B'+_s(1)+'B'+_s(20)+'-----------'+_s(3)+'BBBB'+_s(48)+'-----------',
+_s(17)+'B'+_s(71)+'BBBBBB'+_s(32)+'B'+_s(5)+'B'+_s(25)+'B',
+_s(3)+'P'+_s(2)+'p'+_s(9)+'B'+_s(8)+'B'+_s(10)+'T'+_s(1)+'p'+_s(3)+'A'+_s(17)+'C'
+  +_s(3)+'T'+_s(2)+'K'+_s(2)+'p'+_s(17)+'BBBBBBBB'+_s(1)+'T'+_s(2)+'A'+_s(14)+'K'
+  +_s(2)+'p'+_s(1)+'T'+_s(25)+'T'+_s(9)+'p'+_s(1)+'BB'+_s(8)+'F',
+'X'.repeat(22)+_s(3)+'X'.repeat(27)+_s(5)+'X'.repeat(21)+_s(7)+'X'.repeat(19)
+  +_s(5)+'X'.repeat(17)+_s(10)+'X'.repeat(42),
+'X'.repeat(22)+_s(3)+'X'.repeat(27)+_s(5)+'X'.repeat(21)+_s(7)+'X'.repeat(19)
+  +_s(5)+'X'.repeat(17)+_s(10)+'X'.repeat(42),
+];
+const MAP_W = 178, MAP_H = ROWS.length, LEVEL_W = MAP_W*TILE, LEVEL_H = MAP_H*TILE;
+const GROUND_TOP = 14*TILE;
+const tileChar = (c,r)=> (r>=0 && r<MAP_H && c>=0 && c<MAP_W) ? (ROWS[r][c]||' ') : ' ';
+const isSolidCh = ch => ch==='X' || ch==='B' || ch==='A';
+const solidAt = (c,r)=> isSolidCh(tileChar(c,r));
+
+// ---------- СУЩНОСТИ ИЗ КАРТЫ ----------
+let wheels=[], enemies=[], springs=[], checkpoints=[], palms=[], goal={c:168}, spawn={x:127,y:GROUND_TOP-52};
+for(let r=0;r<MAP_H;r++) for(let c=0;c<MAP_W;c++){
+  const ch = tileChar(c,r), cx=c*TILE+TILE/2, cy=r*TILE+TILE/2;
+  if(ch==='o') wheels.push({x:cx,y:cy,got:false,ph:c*1.7});
+  else if(ch==='T') enemies.push(mkEnemy('tire',c,r));
+  else if(ch==='K') enemies.push(mkEnemy('cone',c,r));
+  else if(ch==='A') springs.push({c,r,anim:0});
+  else if(ch==='C') checkpoints.push({c,r,active:false,x:cx});
+  else if(ch==='p') palms.push({x:cx,h:rnd(100,140),lean:rnd(-.25,.25),ph:rnd(6)});
+  else if(ch==='F') goal={c:r?goal.c:goal.c, x:cx};
+  else if(ch==='P') spawn={x:c*TILE+7,y:GROUND_TOP-52};
+}
+goal.x = 168*TILE+TILE/2;
+function mkEnemy(type,c,r){
+  const w = type==='tire'?34:30, h = type==='tire'?34:34;
+  return {type,x:c*TILE+(TILE-w)/2, y:(r+1)*TILE-h, w,h, vx:0, dir:-1,
+    spd:type==='tire'?95:52, rot:0, dead:false, deadT:0, grounded:false, vy:0};
+}
+
+// Вывески-подсказки
+const SIGNS = [
+  {x:210,  t:'← → — ехать'},
+  {x:345,  t:'ПРОБЕЛ — прыжок'},
+  {x:580,  t:'S в воздухе — трюк!'},
+  {x:24.3*TILE, t:'Запрыгни на перила!'},
+  {x:41.2*TILE, t:'Рампа подбросит!'},
+];
+const GRAFF = ['SK8','♥','13','YO','!!!','RIDE'];
+
+// ---------- ВВОД ----------
+const keys = {};
+const key = c => !!keys[c];
+addEventListener('keydown', e=>{
+  if(['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code)) e.preventDefault();
+  if(e.repeat) return;
+  keys[e.code]=true; ensureAudio();
+  if(e.code==='KeyM'){ muted=!muted; if(master) master.gain.value=muted?0:1; }
+  if(e.code==='Enter') onEnter();
+  if(e.code==='KeyR') resetGame();
+  if((e.code==='KeyP'||e.code==='Escape') && state==='play'){ state='pause'; }
+  else if((e.code==='KeyP'||e.code==='Escape') && state==='pause'){ state='play'; }
+  if(['Space','ArrowUp','KeyW'].includes(e.code)) player.jbuf=0.13;
+  if(e.code==='KeyS'||e.code==='ArrowDown'||e.code==='ShiftLeft'||e.code==='ShiftRight') tryTrick();
+});
+addEventListener('keyup', e=>{
+  keys[e.code]=false;
+  if(['Space','ArrowUp','KeyW'].includes(e.code) && player.vy<-320) player.vy=-320; // короткий прыжок
+});
+addEventListener('blur', ()=>{ if(state==='play') state='pause'; });
+
+// тач-кнопки
+if('ontouchstart' in window || navigator.maxTouchPoints>0) document.body.classList.add('touch');
+function bindTouch(id,code){
+  const el=document.getElementById(id);
+  const on =e=>{e.preventDefault(); keys[code]=true; ensureAudio();
+    if(code==='Space') player.jbuf=0.13;
+    if(code==='KeyS') tryTrick();
+    if(code==='Enter') onEnter(); };
+  const off=e=>{e.preventDefault(); keys[code]=false;
+    if(code==='Space' && player.vy<-320) player.vy=-320;};
+  el.addEventListener('pointerdown',on); el.addEventListener('pointerup',off);
+  el.addEventListener('pointerleave',off); el.addEventListener('contextmenu',e=>e.preventDefault());
+}
+bindTouch('bl','ArrowLeft'); bindTouch('br','ArrowRight');
+bindTouch('bj','Space'); bindTouch('bt','KeyS');
+
+// ---------- ЗВУК (Web Audio) ----------
+let AC=null, master=null, muted=false, noiseBuf=null, grindSrc=null, grindGain=null;
+function ensureAudio(){
+  if(AC) return;
+  try{
+    AC = new (window.AudioContext||window.webkitAudioContext)();
+    master = AC.createGain(); master.gain.value = muted?0:1; master.connect(AC.destination);
+    noiseBuf = AC.createBuffer(1, AC.sampleRate, AC.sampleRate);
+    const d = noiseBuf.getChannelData(0);
+    for(let i=0;i<d.length;i++) d[i]=Math.random()*2-1;
+  }catch(e){}
+}
+function tone(f0,f1,dur,type='square',vol=.15,delay=0){
+  if(!AC||muted) return;
+  const t=AC.currentTime+delay, o=AC.createOscillator(), g=AC.createGain();
+  o.type=type; o.frequency.setValueAtTime(f0,t); o.frequency.exponentialRampToValueAtTime(Math.max(20,f1),t+dur);
+  g.gain.setValueAtTime(vol,t); g.gain.exponentialRampToValueAtTime(.001,t+dur);
+  o.connect(g); g.connect(master); o.start(t); o.stop(t+dur+.02);
+}
+function noiseHit(dur,vol,freq=1200,delay=0){
+  if(!AC||muted) return;
+  const t=AC.currentTime+delay, s=AC.createBufferSource(), g=AC.createGain(), f=AC.createBiquadFilter();
+  s.buffer=noiseBuf; f.type='bandpass'; f.frequency.value=freq; f.Q.value=1.2;
+  g.gain.setValueAtTime(vol,t); g.gain.exponentialRampToValueAtTime(.001,t+dur);
+  s.connect(f); f.connect(g); g.connect(master); s.start(t); s.stop(t+dur+.02);
+}
+const sfx = {
+  jump:   ()=>tone(300,580,.13,'square',.14),
+  stomp:  ()=>{tone(240,70,.14,'square',.2); noiseHit(.1,.12,500);},
+  collect:()=>{tone(880,880,.07,'sine',.16); tone(1320,1320,.1,'sine',.16,.06);},
+  spring: ()=>tone(200,900,.28,'triangle',.2),
+  trick:  ()=>noiseHit(.18,.1,900),
+  trickLand:()=>tone(660,990,.12,'triangle',.18),
+  death:  ()=>tone(420,55,.55,'sawtooth',.22),
+  check:  ()=>{tone(660,660,.09,'triangle',.15); tone(990,990,.14,'triangle',.15,.09);},
+  win:    ()=>{[523,659,784,1047].forEach((f,i)=>tone(f,f,.22,'triangle',.18,i*.14));},
+};
+function setGrind(on){
+  if(!AC) return;
+  if(on && !grindSrc){
+    grindSrc=AC.createBufferSource(); grindGain=AC.createGain();
+    const f=AC.createBiquadFilter(); f.type='bandpass'; f.frequency.value=1500; f.Q.value=4;
+    grindSrc.buffer=noiseBuf; grindSrc.loop=true;
+    grindGain.gain.setValueAtTime(0,AC.currentTime);
+    grindGain.gain.linearRampToValueAtTime(.09,AC.currentTime+.06);
+    grindSrc.connect(f); f.connect(grindGain); grindGain.connect(master); grindSrc.start();
+  } else if(!on && grindSrc){
+    grindGain.gain.linearRampToValueAtTime(0,AC.currentTime+.08);
+    const s=grindSrc; setTimeout(()=>{try{s.stop()}catch(e){}},120);
+    grindSrc=null; grindGain=null;
+  }
+}
+// фоновая музыка: простой бас + хэт
+const BASS=[110,0,110,130.81, 0,98,0,98, 87.31,0,87.31,110, 0,123.47,164.81,0];
+let mStep=0, mNext=0; const mStepDur=60/96/2;
+function music(){
+  if(!AC||muted) return;
+  if(mNext===0) mNext=AC.currentTime+.1;
+  while(mNext < AC.currentTime+.15){
+    const f=BASS[mStep%16], t=mNext;
+    if(f){
+      const o=AC.createOscillator(),g=AC.createGain(),lp=AC.createBiquadFilter();
+      o.type='triangle'; o.frequency.value=f; lp.type='lowpass'; lp.frequency.value=700;
+      g.gain.setValueAtTime(.14,t); g.gain.exponentialRampToValueAtTime(.001,t+.26);
+      o.connect(lp); lp.connect(g); g.connect(master); o.start(t); o.stop(t+.3);
+    }
+    // хэт
+    const s=AC.createBufferSource(),g2=AC.createGain(),hp=AC.createBiquadFilter();
+    s.buffer=noiseBuf; hp.type='highpass'; hp.frequency.value=6000;
+    g2.gain.setValueAtTime(mStep%4===2?.03:.013,t); g2.gain.exponentialRampToValueAtTime(.001,t+.05);
+    s.connect(hp); hp.connect(g2); g2.connect(master); s.start(t); s.stop(t+.06);
+    mNext+=mStepDur; mStep++;
+  }
+}
+
+// ---------- ИГРОК ----------
+const player = {
+  x:spawn.x, y:spawn.y, w:26, h:52, vx:0, vy:0, face:1,
+  grounded:false, coyote:0, jbuf:0, grinding:false, grindT:0,
+  squashT:0, stretchT:0, inv:0, dead:false, deadT:0,
+  trick:null, runT:0, wasGrounded:false,
+};
+const GRAV=2300, JUMP_V=800, MAX_VX=390, ACC=2600, AIR_ACC=1700, FRIC=1100, MAXFALL=1250, SPRING_V=1150;
+
+// ---------- СОСТОЯНИЕ ----------
+let state='title', score=0, lives=3, timeLeft=240, wheelsGot=0, combo=0, trickCount=0;
+let respawn={...spawn}, cam={x:0,y:100}, shake=0, flash=0, gameTime=0, winT=0, titleT=0;
+let best = +(localStorage.getItem('skatehero_best')||0);
+let particles=[], floats=[];
+
+function resetGame(){
+  score=0; lives=3; timeLeft=240; wheelsGot=0; combo=0; trickCount=0;
+  wheels.forEach(w=>w.got=false);
+  enemies.forEach(e=>{e.dead=false;e.deadT=0;e.x=0;});
+  // пересоздаём врагов на исходных позициях
+  enemies=[]; checkpoints.forEach(c=>c.active=false);
+  for(let r=0;r<MAP_H;r++) for(let c=0;c<MAP_W;c++){
+    const ch=tileChar(c,r);
+    if(ch==='T') enemies.push(mkEnemy('tire',c,r));
+    if(ch==='K') enemies.push(mkEnemy('cone',c,r));
+  }
+  respawn={...spawn}; particles=[]; floats=[];
+  placePlayer(spawn.x,spawn.y);
+  state='play'; flash=0; shake=0;
+}
+function placePlayer(x,y){
+  Object.assign(player,{x,y,vx:0,vy:0,grounded:false,grinding:false,grindT:0,dead:false,deadT:0,
+    trick:null,inv:2,coyote:0,jbuf:0,squashT:0,stretchT:0,face:1});
+}
+function onEnter(){
+  if(state==='title'||state==='gameover'||state==='win') resetGame();
+  else if(state==='pause') state='play';
+}
+
+// ---------- ЧАСТИЦЫ / НАДПИСИ ----------
+function puff(x,y,n,c,spd=90,grav=300,size=3){
+  for(let i=0;i<n;i++){
+    const a=rnd(Math.PI*2), v=rnd(spd*.3,spd);
+    particles.push({x,y,vx:Math.cos(a)*v,vy:Math.sin(a)*v-spd*.3,life:rnd(.3,.6),max:.6,
+      size:rnd(size*.6,size*1.4),c,grav});
+  }
+  if(particles.length>420) particles.splice(0,particles.length-420);
+}
+function spark(x,y){
+  particles.push({x,y,vx:rnd(-160,-30),vy:rnd(-140,20),life:rnd(.15,.35),max:.35,
+    size:rnd(1.5,3),c:Math.random()<.5?'#ffd166':'#ff9f43',grav:600});
+}
+function float(x,y,text,c='#fff',size=16){
+  floats.push({x,y,text,c,size,life:1.1,max:1.1});
+}
+
+// ---------- ФИЗИКА ИГРОКА ----------
+function collides(x,y,w,h){
+  const c0=Math.floor(x/TILE), c1=Math.floor((x+w-1)/TILE);
+  const r0=Math.floor(y/TILE), r1=Math.floor((y+h-1)/TILE);
+  for(let r=r0;r<=r1;r++) for(let c=c0;c<=c1;c++) if(solidAt(c,r)) return true;
+  return false;
+}
+function tryTrick(){
+  if(state!=='play'||player.dead||player.grinding) return;
+  if(!player.grounded && !player.trick){
+    const names=['КИКФЛИП','ХИЛФЛИП','ШОВИТ','360 FLIP'];
+    player.trick={t:0,done:false,name:names[Math.floor(rnd(names.length))]};
+    sfx.trick();
+  }
+}
+function endGrind(jumped){
+  if(player.grindT>0.18){
+    const pts=Math.round(60+player.grindT*140);
+    score+=pts; float(player.x+player.w/2, player.y-14, 'ГРАЙНД +'+pts, '#7ef0ff', 15);
+  }
+  player.grinding=false; player.grindT=0; setGrind(false);
+  if(!jumped){ player.grounded=false; player.coyote=0.1; }
+}
+function updatePlayer(dt){
+  const p=player;
+  if(p.dead){ p.deadT+=dt; p.vy+=GRAV*dt; p.y+=p.vy*dt; return; }
+  p.inv=Math.max(0,p.inv-dt); p.squashT=Math.max(0,p.squashT-dt); p.stretchT=Math.max(0,p.stretchT-dt);
+  p.coyote=Math.max(0,p.coyote-dt); p.jbuf=Math.max(0,p.jbuf-dt);
+
+  const left = key('ArrowLeft')||key('KeyA'), right = key('ArrowRight')||key('KeyD');
+  const acc = p.grounded?ACC:AIR_ACC;
+  if(left && !right){ p.vx-=acc*dt; p.face=-1; }
+  else if(right && !left){ p.vx+=acc*dt; p.face=1; }
+  else if(p.grounded){
+    const f=FRIC*(p.grinding?0.12:1)*dt;
+    if(Math.abs(p.vx)<=f) p.vx=0; else p.vx-=Math.sign(p.vx)*f;
+  }
+  // скейт-подтормаживание на земле (легкое)
+  if(p.grounded && !p.grinding && ((left&&p.vx>0)||(right&&p.vx<0)) && Math.abs(p.vx)>180){
+    if(Math.random()<.35) puff(p.x+p.w/2-p.face*10, p.y+p.h, 1, 'rgba(220,210,200,.7)', 40, 60, 2.4);
+  }
+  p.vx=clamp(p.vx,-MAX_VX,MAX_VX);
+
+  // прыжок
+  if(p.jbuf>0 && (p.grounded||p.coyote>0)){
+    p.jbuf=0;
+    if(p.grinding) endGrind(true);
+    p.vy=-JUMP_V; p.grounded=false; p.coyote=0; p.stretchT=.12;
+    puff(p.x+p.w/2,p.y+p.h,6,'rgba(230,225,215,.8)',110,250,3);
+    sfx.jump();
+  }
+
+  p.vy=Math.min(p.vy+GRAV*dt, MAXFALL);
+  if(p.grinding) p.vy=0;
+
+  // X
+  p.x+=p.vx*dt;
+  p.x=clamp(p.x,0,LEVEL_W-p.w);
+  if(p.vx>0 && collides(p.x,p.y,p.w,p.h)){ p.x=Math.floor((p.x+p.w)/TILE)*TILE-p.w-0.01; p.vx=0; }
+  if(p.vx<0 && collides(p.x,p.y,p.w,p.h)){ p.x=(Math.floor(p.x/TILE)+1)*TILE+0.01; p.vx=0; }
+
+  // Y
+  const prevBottom=p.y+p.h;
+  if(!p.grinding){
+    p.y+=p.vy*dt;
+    p.grounded=false;
+    if(p.vy>=0 && collides(p.x,p.y,p.w,p.h)){
+      const row=Math.floor((p.y+p.h)/TILE);
+      p.y=row*TILE-p.h-0.01; p.vy=0; p.grounded=true;
+      if(!p.wasGrounded){ p.squashT=.14; puff(p.x+p.w/2,p.y+p.h,7,'rgba(230,225,215,.8)',120,250,3); }
+      // рампа-пружина?
+      const c0=Math.floor(p.x/TILE), c1=Math.floor((p.x+p.w-1)/TILE);
+      for(let c=c0;c<=c1;c++) if(tileChar(c,row)==='A'){
+        p.vy=-SPRING_V; p.grounded=false; p.stretchT=.16;
+        const sp=springs.find(s=>s.c===c&&s.r===row); if(sp) sp.anim=1;
+        puff(p.x+p.w/2,p.y+p.h,10,'#ffd166',180,400,3);
+        sfx.spring(); shake=Math.max(shake,4);
+      }
+    }
+    if(p.vy<0 && collides(p.x,p.y,p.w,p.h)){
+      p.y=(Math.floor(p.y/TILE)+1)*TILE+0.01; p.vy=0;
+    }
+  }
+
+  // приземление на перила → грайнд
+  if(!p.grounded && p.vy>=0 && !p.grinding && !p.dead){
+    const bottom=p.y+p.h;
+    const row=Math.floor((bottom+8)/TILE);
+    for(const fx of [p.x+4,p.x+p.w-4]){
+      const c=Math.floor(fx/TILE);
+      if(tileChar(c,row)==='-' && bottom>=row*TILE-10 && bottom<=row*TILE+16){
+        p.grinding=true; p.grounded=true; p.y=row*TILE+8-p.h; p.vy=0;
+        break;
+      }
+    }
+  }
+  if(p.grinding){
+    p.grindT+=dt; p.y = Math.floor((p.y+p.h)/TILE)*TILE+8-p.h;
+    const row=Math.floor((p.y+p.h)/TILE);
+    const c0=Math.floor((p.x+4)/TILE), c1=Math.floor((p.x+p.w-4)/TILE);
+    let onRail=false;
+    for(let c=c0;c<=c1;c++) if(tileChar(c,row)==='-') onRail=true;
+    if(!onRail) endGrind(false);
+    else {
+      setGrind(true);
+      spark(p.x+p.w/2-p.face*16, p.y+p.h+4);
+      if(Math.random()<.4) spark(p.x+p.w/2-p.face*14, p.y+p.h+3);
+    }
+  } else if(!p.grounded) setGrind(false); else setGrind(false);
+
+  if(p.grounded){ p.coyote=0.09; if(combo>0) combo=0; }
+
+  // трюк
+  if(p.trick){
+    p.trick.t+=dt;
+    if(p.trick.t>=0.45 && !p.trick.done){
+      p.trick.done=true;
+      if(p.grounded){ score+=150; trickCount++; float(p.x+p.w/2,p.y-16,p.trick.name+'! +150','#ffe066',17); sfx.trickLand(); }
+      p.trick=null;
+    } else if(p.trick && p.trick.t<0.45 && p.grounded && p.trick.t>0.05){
+      score+=150; trickCount++; float(p.x+p.w/2,p.y-16,p.trick.name+'! +150','#ffe066',17);
+      sfx.trickLand(); p.trick=null;
+    }
+  }
+
+  p.runT+=Math.abs(p.vx)*dt*0.05;
+  p.wasGrounded=p.grounded;
+
+  // колёса
+  for(const w of wheels){
+    if(!w.got && Math.abs(p.x+p.w/2-w.x)<30 && Math.abs(p.y+p.h/2-w.y)<34){
+      w.got=true; score+=100; wheelsGot++;
+      puff(w.x,w.y,8,'#ffd166',140,60,2.5);
+      float(w.x,w.y-14,'+100','#ffd166',13);
+      sfx.collect();
+    }
+  }
+  // чекпоинты
+  for(const cp of checkpoints){
+    if(!cp.active && p.x+p.w/2>cp.x){
+      cp.active=true; respawn={x:cp.c*TILE+7,y:GROUND_TOP-p.h};
+      float(cp.x,GROUND_TOP-150,'ЧЕКПОИНТ!','#3ddc84',18); sfx.check();
+      puff(cp.x,GROUND_TOP-60,12,'#3ddc84',150,100,2.5);
+    }
+  }
+  // финиш
+  if(p.x+p.w/2>goal.x-10 && state==='play'){
+    state='win'; winT=0;
+    const bonus=Math.round(timeLeft)*10+lives*500;
+    score+=bonus;
+    if(score>best){ best=score; localStorage.setItem('skatehero_best',best); }
+    sfx.win(); setGrind(false);
+  }
+  // пропасть
+  if(p.y>LEVEL_H+60) kill();
+}
+function kill(){
+  if(player.dead) return;
+  player.dead=true; player.deadT=0; player.vy=-620;
+  lives--; shake=10; flash=.5; setGrind(false); sfx.death();
+}
+function afterDeath(){
+  if(lives<=0){
+    state='gameover';
+    if(score>best){ best=score; localStorage.setItem('skatehero_best',best); }
+  } else {
+    placePlayer(respawn.x,respawn.y);
+    timeLeft=Math.max(timeLeft,60);
+  }
+}
+
+// ---------- ВРАГИ ----------
+function updateEnemy(e,dt){
+  if(e.dead){ e.deadT+=dt; return; }
+  e.vy=Math.min(e.vy+GRAV*dt,MAXFALL);
+  e.y+=e.vy*dt; e.grounded=false;
+  if(e.vy>=0 && rectHits(e.x,e.y,e.w,e.h)){
+    e.y=Math.floor((e.y+e.h)/TILE)*TILE-e.h-0.01; e.vy=0; e.grounded=true;
+  }
+  e.vx=e.dir*e.spd;
+  e.x+=e.vx*dt;
+  const aheadX = e.dir>0 ? e.x+e.w+1 : e.x-1;
+  const aheadC=Math.floor(aheadX/TILE), footR=Math.floor((e.y+e.h+4)/TILE);
+  const wallC=Math.floor((e.dir>0?e.x+e.w:e.x-1)/TILE), bodyR=Math.floor((e.y+e.h/2)/TILE);
+  if(solidAt(wallC,bodyR) || (e.grounded && !solidAt(aheadC,footR))) e.dir*=-1;
+  if(e.type==='tire') e.rot+=e.vx*dt/17;
+  // столкновение с игроком
+  const p=player;
+  if(state!=='play'||p.dead||p.inv>0) return;
+  if(p.x<e.x+e.w && p.x+p.w>e.x && p.y<e.y+e.h && p.y+p.h>e.y){
+    if(p.vy>120 && (p.y+p.h)-e.y<24){
+      e.dead=true; e.deadT=0; combo++;
+      const pts=Math.min(200*Math.pow(2,combo-1),1600);
+      score+=pts;
+      float(e.x+e.w/2,e.y-10,'+'+pts+(combo>1?' x'+combo:''),'#ff9f43',16+combo*2);
+      p.vy=(key('Space')||key('ArrowUp')||key('KeyW'))?-680:-430;
+      p.stretchT=.12;
+      puff(e.x+e.w/2,e.y+e.h/2,12,e.type==='tire'?'#3a3f52':'#ff9f43',160,300,3);
+      shake=Math.max(shake,5); sfx.stomp();
+    } else kill();
+  }
+}
+function rectHits(x,y,w,h){
+  const c0=Math.floor(x/TILE),c1=Math.floor((x+w-1)/TILE),r0=Math.floor(y/TILE),r1=Math.floor((y+h-1)/TILE);
+  for(let r=r0;r<=r1;r++) for(let c=c0;c<=c1;c++) if(solidAt(c,r)) return true;
+  return false;
+}
+
+// ---------- КАМЕРА ----------
+function updateCam(dt){
+  let tx,ty;
+  if(state==='title'){ tx=60+(Math.sin(titleT*.22)+1)*260; ty=LEVEL_H-VH; }
+  else { tx=player.x+player.w/2+player.vx*.14-VW*.42; ty=clamp(player.y-VH*.55,0,LEVEL_H-VH); }
+  cam.x=lerp(cam.x,clamp(tx,0,LEVEL_W-VW),Math.min(1,7*dt));
+  cam.y=lerp(cam.y,ty,Math.min(1,6*dt));
+}
+
+// ---------- ГЛАВНЫЙ ШАГ ----------
+function update(dt){
+  gameTime+=dt;
+  shake=Math.max(0,shake-26*dt);
+  flash=Math.max(0,flash-2.2*dt);
+  springs.forEach(s=>s.anim=Math.max(0,s.anim-4*dt));
+  particles=particles.filter(pt=>{
+    pt.life-=dt; pt.x+=pt.vx*dt; pt.y+=pt.vy*dt; pt.vy+=pt.grav*dt; return pt.life>0;
+  });
+  floats=floats.filter(f=>{ f.life-=dt; f.y-=42*dt; return f.life>0; });
+  music();
+
+  if(state==='title'){ titleT+=dt; updateCam(dt); return; }
+  if(state==='pause'||state==='gameover') return;
+  if(state==='win'){
+    winT+=dt;
+    if(winT<2.5 && Math.random()<.35)
+      puff(goal.x+rnd(-80,80),GROUND_TOP-rnd(60,200),3,['#ff6b6b','#ffd166','#4ecdc4','#a06cd5'][Math.floor(rnd(4))],140,260,3);
+    updateCam(dt); return;
+  }
+  // play
+  timeLeft-=dt;
+  if(timeLeft<=0){ timeLeft=0; kill(); }
+  updatePlayer(dt);
+  if(player.dead && player.deadT>1.15) afterDeath();
+  enemies.forEach(e=>updateEnemy(e,dt));
+  updateCam(dt);
+}
+
+// ============================================================
+//  ОТРИСОВКА
+// ============================================================
+const stars=Array.from({length:44},()=>({x:rnd(1400),y:rnd(240),ph:rnd(6)}));
+const clouds=Array.from({length:6},()=>({x:rnd(1600),y:rnd(60,220),s:rnd(.7,1.5),v:rnd(4,11)}));
+const bldgs=[]; (function(){ let x=20;
+  while(x<1380){ const w=rnd(60,140),h=rnd(70,230);
+    bldgs.push({x,w,h,win:Math.random()<.8}); x+=w+rnd(8,30); } })();
+
+function drawSky(){
+  const g=ctx.createLinearGradient(0,0,0,VH);
+  g.addColorStop(0,'#241a4a'); g.addColorStop(.42,'#5c2a63');
+  g.addColorStop(.66,'#c65a4e'); g.addColorStop(.8,'#f7a05a'); g.addColorStop(1,'#ffd08a');
+  ctx.fillStyle=g; ctx.fillRect(0,0,VW,VH);
+  // звёзды
+  const so=cam.x*.03;
+  ctx.fillStyle='#fff';
+  for(const s of stars){
+    const sx=((s.x-so)%1400+1400)%1400-220;
+    if(sx<-10||sx>VW+10) continue;
+    ctx.globalAlpha=.25+.4*(Math.sin(gameTime*2+s.ph)+1)/2;
+    ctx.fillRect(sx,s.y,2,2);
+  }
+  ctx.globalAlpha=1;
+  // солнце
+  const sunX=VW*.72-cam.x*.05, sunY=330;
+  const sg=ctx.createRadialGradient(sunX,sunY,10,sunX,sunY,190);
+  sg.addColorStop(0,'rgba(255,224,150,.9)'); sg.addColorStop(1,'rgba(255,224,150,0)');
+  ctx.fillStyle=sg; ctx.fillRect(sunX-200,sunY-200,400,400);
+  ctx.fillStyle='#ffdf8e'; ctx.beginPath(); ctx.arc(sunX,sunY,44,0,7); ctx.fill();
+  ctx.fillStyle='#ffca6b'; ctx.beginPath(); ctx.arc(sunX,sunY+14,44,0,Math.PI); ctx.fill();
+  // облака
+  for(const c of clouds){
+    c.x+=c.v*STEP;
+    const cx=((c.x-cam.x*.08)%(VW+400)+(VW+400))%(VW+400)-200;
+    ctx.fillStyle='rgba(255,190,150,.32)';
+    ctx.beginPath();
+    ctx.ellipse(cx,c.y,46*c.s,12*c.s,0,0,7);
+    ctx.ellipse(cx+30*c.s,c.y-8*c.s,28*c.s,10*c.s,0,0,7);
+    ctx.fill();
+  }
+  // город
+  const off=-((cam.x*.15)%1400);
+  for(let k=0;k<2;k++){
+    for(const b of bldgs){
+      const bx=off+k*1400+b.x;
+      if(bx+b.w<-20||bx>VW+20) continue;
+      ctx.fillStyle='#33204f';
+      ctx.fillRect(bx,430-b.h,b.w,b.h+40);
+      if(b.win){
+        ctx.fillStyle='rgba(255,207,107,.75)';
+        for(let wy=430-b.h+10;wy<420;wy+=22)
+          for(let wx=bx+8;wx<bx+b.w-8;wx+=18)
+            if(((wx*7+wy*13)|0)%5<2) ctx.fillRect(wx,wy,4,6);
+      }
+    }
+  }
+  // холмы
+  const ho=-((cam.x*.35)%900);
+  ctx.fillStyle='#422656';
+  for(let k=0;k<3;k++){
+    const bx=ho+k*900;
+    ctx.beginPath(); ctx.arc(bx+200,560,240,Math.PI,0); ctx.fill();
+    ctx.beginPath(); ctx.arc(bx+620,585,300,Math.PI,0); ctx.fill();
+  }
+}
+
+function groundTopExposed(c,r){ return !isSolidCh(tileChar(c,r-1)); }
+function drawTiles(){
+  const c0=Math.max(0,Math.floor(cam.x/TILE)-1), c1=Math.min(MAP_W-1,Math.ceil((cam.x+VW)/TILE)+1);
+  for(let r=0;r<MAP_H;r++) for(let c=c0;c<=c1;c++){
+    const ch=tileChar(c,r); if(ch===' '||ch==='o'||ch==='T'||ch==='K'||ch==='P'||ch==='p') continue;
+    const x=c*TILE,y=r*TILE;
+    if(ch==='X'){
+      ctx.fillStyle='#3d4257'; ctx.fillRect(x,y,TILE,TILE);
+      const h=(c*73856093^r*19349663)>>>0;
+      ctx.fillStyle='rgba(0,0,0,.18)';
+      ctx.fillRect(x+(h%29)+4,y+((h>>5)%26)+8,3,3);
+      ctx.fillRect(x+((h>>9)%31)+2,y+((h>>3)%30)+4,2,2);
+      if(groundTopExposed(c,r)){
+        ctx.fillStyle='#8f98ad'; ctx.fillRect(x,y,TILE,9);
+        ctx.fillStyle='#eef1f7'; ctx.fillRect(x,y,TILE,3);
+        if(c%7===3){ // граффити
+          const col=['#ff6b6b','#4ecdc4','#ffe66d','#a06cd5'][c%4];
+          ctx.save(); ctx.translate(x+20,y+24); ctx.rotate(-.12);
+          ctx.globalAlpha=.55; ctx.fillStyle=col;
+          ctx.beginPath(); ctx.ellipse(0,0,15,8,0,0,7); ctx.fill();
+          ctx.globalAlpha=.95; ctx.fillStyle='#20242f';
+          ctx.font='11px "Russo One"'; ctx.textAlign='center';
+          ctx.fillText(GRAFF[(c>>2)%GRAFF.length],0,4); ctx.restore();
+        }
+      }
+      if(!solidAt(c-1,r)){ ctx.fillStyle='rgba(255,255,255,.1)'; ctx.fillRect(x,y,3,TILE); }
+      if(!solidAt(c+1,r)){ ctx.fillStyle='rgba(0,0,0,.25)'; ctx.fillRect(x+TILE-3,y,3,TILE); }
+    }
+    else if(ch==='B'){
+      ctx.fillStyle='#767e97'; ctx.fillRect(x,y,TILE,TILE);
+      ctx.fillStyle='#a5aec5'; ctx.fillRect(x,y,TILE,6); ctx.fillRect(x,y,4,TILE);
+      ctx.fillStyle='#545b73'; ctx.fillRect(x,y+TILE-5,TILE,5); ctx.fillRect(x+TILE-4,y,4,TILE);
+      ctx.fillStyle='#494f66';
+      ctx.fillRect(x+8,y+8,4,4); ctx.fillRect(x+TILE-12,y+TILE-12,4,4);
+    }
+    else if(ch==='-'){
+      // перила
+      const ry=y+8;
+      ctx.fillStyle='#6b7288';
+      if(tileChar(c-1,r)!=='-'||c%3===0){ ctx.fillRect(x+TILE/2-2,ry+4,5,30); ctx.fillRect(x+TILE/2-6,ry+32,13,4); }
+      ctx.fillStyle='#8b93a6'; ctx.fillRect(x,ry+4,TILE,3);
+      ctx.fillStyle='#d7dee9'; ctx.fillRect(x,ry,TILE,4);
+      ctx.fillStyle='rgba(255,255,255,.85)'; ctx.fillRect(x,ry,TILE,1.5);
+    }
+    else if(ch==='A'){
+      const sp=springs.find(s=>s.c===c&&s.r===r);
+      const sq=1-(sp?sp.anim:0)*.45;
+      ctx.save(); ctx.translate(x,y+TILE); ctx.scale(1,sq);
+      ctx.fillStyle='#565d75'; ctx.fillRect(4,-6,TILE-8,6);
+      ctx.beginPath(); ctx.moveTo(2,0); ctx.lineTo(TILE-2,0); ctx.lineTo(TILE-2,-TILE+6); ctx.closePath();
+      ctx.fillStyle='#2b2f42'; ctx.fill();
+      ctx.save(); ctx.clip();
+      ctx.strokeStyle='#ffd23f'; ctx.lineWidth=7;
+      for(let i=-2;i<6;i++){ ctx.beginPath(); ctx.moveTo(i*14,-TILE); ctx.lineTo(i*14+22,4); ctx.stroke(); }
+      ctx.restore();
+      ctx.strokeStyle='#141721'; ctx.lineWidth=2.5;
+      ctx.beginPath(); ctx.moveTo(2,0); ctx.lineTo(TILE-2,0); ctx.lineTo(TILE-2,-TILE+6); ctx.closePath(); ctx.stroke();
+      ctx.fillStyle='#fff'; ctx.font='15px "Russo One"'; ctx.textAlign='center';
+      ctx.fillText('▲',TILE/2+6,-8);
+      ctx.restore();
+    }
+    else if(ch==='C'){
+      const cp=checkpoints.find(q=>q.c===c);
+      ctx.fillStyle='#9aa2b5'; ctx.fillRect(x+TILE/2-2,y-TILE*2.4,4,TILE*3.4);
+      ctx.fillStyle='#565d75'; ctx.fillRect(x+8,y+TILE-8,TILE-16,8);
+      ctx.fillStyle=cp&&cp.active?'#3ddc84':'#c0c6d4';
+      ctx.beginPath(); ctx.moveTo(x+TILE/2+2,y-TILE*2.4);
+      ctx.lineTo(x+TILE/2+30,y-TILE*2.4+9); ctx.lineTo(x+TILE/2+2,y-TILE*2.4+18); ctx.fill();
+      if(cp&&cp.active){ ctx.fillStyle='rgba(61,220,132,.25)';
+        ctx.beginPath(); ctx.arc(x+TILE/2,y-TILE*2.4,16+Math.sin(gameTime*4)*3,0,7); ctx.fill(); }
+    }
+  }
+  // финиш
+  drawGoal();
+}
+function drawGoal(){
+  const x=goal.x, top=GROUND_TOP-TILE*4.6;
+  ctx.fillStyle='#c9a24b';
+  ctx.fillRect(x-4,top,8,GROUND_TOP-top); ctx.fillRect(x+TILE*3-4,top,8,GROUND_TOP-top);
+  ctx.fillStyle='#ffd166';
+  ctx.beginPath(); ctx.arc(x,top,7,0,7); ctx.arc(x+TILE*3,top,7,0,7); ctx.fill();
+  const bw=TILE*3+8;
+  for(let r=0;r<3;r++) for(let cc=0;cc<Math.ceil(bw/14);cc++){
+    ctx.fillStyle=(r+cc)%2?'#171a24':'#f4f2ec';
+    ctx.fillRect(x-4+cc*14,top+8+r*14,Math.min(14,bw-cc*14),14);
+  }
+  ctx.fillStyle='#fff'; ctx.fillRect(x-4,top+52,bw,26);
+  ctx.strokeStyle='#171a24'; ctx.lineWidth=2; ctx.strokeRect(x-4,top+52,bw,26);
+  ctx.fillStyle='#e0472f'; ctx.font='17px "Russo One"'; ctx.textAlign='center';
+  ctx.fillText('ФИНИШ',x-4+bw/2,top+71);
+}
+function drawPalms(){
+  for(const p of palms){
+    if(p.x<cam.x-120||p.x>cam.x+VW+120) continue;
+    const base=GROUND_TOP;
+    ctx.strokeStyle='#6e4b3a'; ctx.lineWidth=9; ctx.lineCap='round';
+    ctx.beginPath(); ctx.moveTo(p.x,base);
+    const tx=p.x+p.lean*p.h, ty=base-p.h;
+    ctx.quadraticCurveTo(p.x+p.lean*p.h*.3,base-p.h*.6,tx,ty); ctx.stroke();
+    ctx.lineCap='butt';
+    const sway=Math.sin(gameTime*.9+p.ph)*.06;
+    ctx.strokeStyle='#2f7d4f'; ctx.lineWidth=6;
+    for(let i=0;i<6;i++){
+      const a=-Math.PI/2+(i-2.5)*.55+sway;
+      ctx.beginPath(); ctx.moveTo(tx,ty);
+      ctx.quadraticCurveTo(tx+Math.cos(a)*22,ty+Math.sin(a)*22-8,tx+Math.cos(a)*40,ty+Math.sin(a)*40+10);
+      ctx.stroke();
+    }
+  }
+}
+function drawSigns(){
+  for(const s of SIGNS){
+    if(s.x<cam.x-200||s.x>cam.x+VW+200) continue;
+    ctx.font='13px Rubik';
+    const w=ctx.measureText(s.t).width+26, y=GROUND_TOP-118;
+    ctx.fillStyle='#6e4b3a'; ctx.fillRect(s.x-3,y+24,6,GROUND_TOP-y-24);
+    ctx.fillStyle='#d8b06e'; ctx.fillRect(s.x-w/2,y,w,30);
+    ctx.strokeStyle='#7c5a2e'; ctx.lineWidth=3; ctx.strokeRect(s.x-w/2,y,w,30);
+    ctx.fillStyle='#3a2a17'; ctx.textAlign='center';
+    ctx.fillText(s.t,s.x,y+20);
+  }
+}
+function drawWheels(){
+  for(const w of wheels){
+    if(w.got||w.x<cam.x-40||w.x>cam.x+VW+40) continue;
+    const bob=Math.sin(gameTime*3+w.ph)*4;
+    ctx.save(); ctx.translate(w.x,w.y+bob); ctx.rotate(gameTime*1.5+w.ph);
+    ctx.fillStyle='rgba(255,209,102,.18)'; ctx.beginPath(); ctx.arc(0,0,20,0,7); ctx.fill();
+    ctx.fillStyle='#ffd166'; ctx.beginPath(); ctx.arc(0,0,12,0,7); ctx.fill();
+    ctx.strokeStyle='#b8860b'; ctx.lineWidth=3; ctx.stroke();
+    ctx.fillStyle='#8a5a1a'; ctx.beginPath(); ctx.arc(0,0,4,0,7); ctx.fill();
+    ctx.fillStyle='rgba(255,255,255,.9)'; ctx.fillRect(2,-9,3,3);
+    ctx.restore();
+  }
+}
+function drawEnemies(){
+  for(const e of enemies){
+    if(e.x+e.w<cam.x-40||e.x>cam.x+VW+40) continue;
+    const cx=e.x+e.w/2, cy=e.y+e.h;
+    if(e.dead){
+      if(e.deadT>1.2) continue;
+      const k=Math.max(0,1-e.deadT*3);
+      ctx.globalAlpha=Math.max(0,1-e.deadT);
+      ctx.fillStyle=e.type==='tire'?'#23252f':'#e0703a';
+      ctx.beginPath(); ctx.ellipse(cx,cy-4,e.w*.65,5*k+2,0,0,7); ctx.fill();
+      ctx.globalAlpha=1; continue;
+    }
+    ctx.save(); ctx.translate(cx,cy);
+    if(e.type==='tire'){
+      ctx.rotate(e.rot);
+      ctx.fillStyle='#23252f'; ctx.beginPath(); ctx.arc(0,-17,17,0,7); ctx.fill();
+      ctx.strokeStyle='#111'; ctx.lineWidth=3;
+      for(let i=0;i<4;i++){ const a=i*Math.PI/2;
+        ctx.beginPath(); ctx.moveTo(Math.cos(a)*6,-17+Math.sin(a)*6);
+        ctx.lineTo(Math.cos(a)*13,-17+Math.sin(a)*13); ctx.stroke(); }
+      ctx.fillStyle='#9aa2b5'; ctx.beginPath(); ctx.arc(0,-17,7,0,7); ctx.fill();
+      ctx.fillStyle='#3d4257'; ctx.beginPath(); ctx.arc(0,-17,2.5,0,7); ctx.fill();
+    } else {
+      ctx.rotate(Math.sin(gameTime*8+e.x)*.08);
+      ctx.fillStyle='#e0703a';
+      ctx.beginPath(); ctx.moveTo(0,-34); ctx.lineTo(13,0); ctx.lineTo(-13,0); ctx.closePath(); ctx.fill();
+      ctx.fillStyle='#fff'; ctx.fillRect(-7,-19,14,5);
+      ctx.fillStyle='#c25a28'; ctx.fillRect(-15,-3,30,4);
+      ctx.fillStyle='#3a2a17';
+      ctx.fillRect(-5,-29,2.5,2.5); ctx.fillRect(2.5,-29,2.5,2.5);
+    }
+    ctx.restore();
+  }
+}
+function drawPlayer(){
+  const p=player;
+  if(p.inv>0 && !p.dead && Math.floor(p.inv*14)%2===0) return;
+  ctx.save();
+  ctx.translate(p.x+p.w/2, p.y+p.h);
+  if(p.dead) ctx.rotate(p.deadT*7);
+  let sx=1,sy=1;
+  if(p.squashT>0){ const k=p.squashT/.14; sy=1-.26*k; sx=1+.22*k; }
+  if(p.stretchT>0){ const k=p.stretchT/.12; sy=1+.18*k; sx=1-.12*k; }
+  ctx.scale(sx*p.face, sy);
+  const crouch = p.grounded&&!p.grinding ? clamp(Math.abs(p.vx)/MAX_VX,.2,1)*.5 : (p.grinding?.35:.15);
+  const bob = p.grounded&&!p.grinding ? Math.sin(p.runT*2.2)*1.6*clamp(Math.abs(p.vx)/MAX_VX,0,1) : 0;
+  // доска
+  let boardY=-7, flip=1, tilt=0;
+  if(!p.grounded){ tilt=clamp(p.vy*.00045,-.3,.25); }
+  if(p.grinding){ tilt=-.06; }
+  if(p.trick){ const pr=p.trick.t/.45; boardY=-7-8*Math.sin(pr*Math.PI); flip=Math.cos(pr*Math.PI*2); }
+  ctx.save(); ctx.translate(0,boardY); ctx.rotate(tilt); ctx.scale(1,Math.max(.15,Math.abs(flip)));
+  ctx.fillStyle='#8a5a33'; ctx.fillRect(-22,4,44,3);
+  ctx.fillStyle='#ff9f43'; ctx.fillRect(-23,0,46,5);
+  ctx.fillStyle='#ffd166'; ctx.fillRect(-23,0,46,2);
+  ctx.fillStyle='#3d4257'; ctx.fillRect(-14,5,5,3); ctx.fillRect(9,5,5,3);
+  ctx.fillStyle='#ffe066'; ctx.strokeStyle='#8a6a00'; ctx.lineWidth=1.5;
+  for(const wx of [-13,13]){ ctx.beginPath(); ctx.arc(wx,9,4.5,0,7); ctx.fill(); ctx.stroke(); }
+  ctx.restore();
+  const hipY=-24+crouch*7+bob;
+  // ноги
+  ctx.strokeStyle='#31426b'; ctx.lineWidth=5.5; ctx.lineCap='round';
+  ctx.beginPath(); ctx.moveTo(-3,hipY); ctx.quadraticCurveTo(-10,hipY+9,-12,boardY-2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(3,hipY); ctx.quadraticCurveTo(10,hipY+8,12,boardY-2); ctx.stroke();
+  ctx.fillStyle='#20242f';
+  ctx.fillRect(-16,boardY-5,9,4); ctx.fillRect(8,boardY-5,9,4);
+  // торс (худи)
+  const shY=hipY-19;
+  ctx.fillStyle='#2ec4b6';
+  ctx.beginPath();
+  ctx.moveTo(-9,hipY+2); ctx.lineTo(-10,shY+4); ctx.quadraticCurveTo(-10,shY-3,-3,shY-3);
+  ctx.lineTo(4,shY-3); ctx.quadraticCurveTo(10,shY-3,10,shY+4); ctx.lineTo(9,hipY+2); ctx.closePath(); ctx.fill();
+  ctx.fillStyle='#21a399'; ctx.fillRect(-6,hipY-6,12,4);
+  // руки
+  ctx.strokeStyle='#21a399'; ctx.lineWidth=5;
+  const air=!p.grounded;
+  if(air||p.grinding){
+    ctx.beginPath(); ctx.moveTo(-6,shY+3); ctx.lineTo(-19,shY-2+Math.sin(gameTime*9)*2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(6,shY+3); ctx.lineTo(19,shY-6); ctx.stroke();
+    ctx.fillStyle='#ffd9b3';
+    ctx.beginPath(); ctx.arc(-19,shY-2,3,0,7); ctx.arc(19,shY-6,3,0,7); ctx.fill();
+  } else {
+    const sw=Math.sin(p.runT*2.2)*6*clamp(Math.abs(p.vx)/MAX_VX,0,1);
+    ctx.beginPath(); ctx.moveTo(-6,shY+3); ctx.quadraticCurveTo(-13,shY+10,-11,shY+15+sw*.4); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(6,shY+3); ctx.quadraticCurveTo(13,shY+9,12,shY+14-sw*.4); ctx.stroke();
+  }
+  // голова + кепка
+  const hx=2, hy=shY-11;
+  ctx.fillStyle='#ffd9b3'; ctx.beginPath(); ctx.arc(hx,hy,8.5,0,7); ctx.fill();
+  ctx.fillStyle='#ef476f';
+  ctx.beginPath(); ctx.arc(hx,hy-1.5,8.8,Math.PI,0); ctx.fill();
+  ctx.fillRect(hx-14,hy-4.5,7,3.5);
+  ctx.fillStyle='#20242f'; ctx.fillRect(hx+4,hy-1,2.5,3);
+  ctx.lineCap='butt';
+  ctx.restore();
+}
+function drawParticles(){
+  for(const pt of particles){
+    ctx.globalAlpha=clamp(pt.life/pt.max,0,1);
+    ctx.fillStyle=pt.c;
+    ctx.fillRect(pt.x-pt.size/2,pt.y-pt.size/2,pt.size,pt.size);
+  }
+  ctx.globalAlpha=1;
+}
+function drawFloats(){
+  ctx.textAlign='center';
+  for(const f of floats){
+    ctx.globalAlpha=clamp(f.life/f.max,0,1);
+    ctx.font=f.size+'px "Russo One"';
+    ctx.strokeStyle='rgba(20,12,40,.9)'; ctx.lineWidth=4;
+    ctx.strokeText(f.text,f.x,f.y);
+    ctx.fillStyle=f.c; ctx.fillText(f.text,f.x,f.y);
+  }
+  ctx.globalAlpha=1;
+}
+
+// ---------- HUD ----------
+function panel(x,y,w,h){
+  ctx.fillStyle='rgba(20,16,38,.55)';
+  ctx.beginPath(); ctx.roundRect(x,y,w,h,10); ctx.fill();
+  ctx.strokeStyle='rgba(255,255,255,.14)'; ctx.lineWidth=1.5; ctx.stroke();
+}
+function drawBoardIcon(x,y,s=1){
+  ctx.save(); ctx.translate(x,y); ctx.scale(s,s);
+  ctx.fillStyle='#ff9f43'; ctx.beginPath(); ctx.roundRect(-14,-3,28,5,3); ctx.fill();
+  ctx.fillStyle='#ffe066';
+  ctx.beginPath(); ctx.arc(-8,4,3,0,7); ctx.arc(8,4,3,0,7); ctx.fill();
+  ctx.restore();
+}
+function drawHUD(){
+  panel(14,12,176,52);
+  ctx.save(); ctx.translate(40,38); ctx.rotate(gameTime*2);
+  ctx.fillStyle='#ffd166'; ctx.beginPath(); ctx.arc(0,0,13,0,7); ctx.fill();
+  ctx.strokeStyle='#b8860b'; ctx.lineWidth=3; ctx.stroke();
+  ctx.fillStyle='#8a5a1a'; ctx.beginPath(); ctx.arc(0,0,4,0,7); ctx.fill();
+  ctx.restore();
+  ctx.textAlign='left';
+  ctx.font='24px "Russo One"'; ctx.fillStyle='#fff';
+  ctx.fillText(String(score).padStart(6,'0'),62,40);
+  ctx.font='10px Rubik'; ctx.fillStyle='#ffd9a0';
+  ctx.fillText('РЕКОРД '+best,62,56);
+  // жизни
+  panel(VW/2-80,12,160,36);
+  ctx.font='12px Rubik'; ctx.fillStyle='#c9c2e8'; ctx.textAlign='left';
+  ctx.fillText('ЖИЗНИ',VW/2-68,35);
+  for(let i=0;i<3;i++){
+    ctx.globalAlpha=i<lives?1:.22;
+    drawBoardIcon(VW/2+8+i*34,30,.8);
+  }
+  ctx.globalAlpha=1;
+  // время
+  panel(VW-136,12,122,44);
+  const t=Math.ceil(timeLeft);
+  ctx.font='24px "Russo One"'; ctx.textAlign='center';
+  ctx.fillStyle=t<=60?(Math.sin(gameTime*8)>0?'#ff5d5d':'#ffd0d0'):'#fff';
+  ctx.fillText(String(Math.floor(t/60))+':'+String(t%60).padStart(2,'0'),VW-75,42);
+  ctx.font='9px Rubik'; ctx.fillStyle='#c9c2e8'; ctx.fillText('ВРЕМЯ',VW-75,22);
+  if(muted){ ctx.font='11px Rubik'; ctx.fillStyle='rgba(255,255,255,.5)';
+    ctx.textAlign='right'; ctx.fillText('ЗВУК ВЫКЛ [M]',VW-16,VH-14); }
+}
+
+// ---------- ЭКРАНЫ ----------
+function dim(a=.5){ ctx.fillStyle='rgba(16,10,32,'+a+')'; ctx.fillRect(0,0,VW,VH); }
+function drawTitle(){
+  dim(.42);
+  const t=titleT, cy=140+Math.sin(t*2)*5;
+  ctx.save(); ctx.translate(VW/2,cy); ctx.rotate(Math.sin(t*1.3)*.015);
+  ctx.textAlign='center'; ctx.font='68px "Russo One"';
+  ctx.fillStyle='#1b1035'; ctx.fillText('СКЕЙТ-ГЕРОЙ',5,7);
+  const lg=ctx.createLinearGradient(0,-50,0,20);
+  lg.addColorStop(0,'#ffd166'); lg.addColorStop(.55,'#ff9f43'); lg.addColorStop(1,'#ff5e5b');
+  ctx.fillStyle=lg; ctx.fillText('СКЕЙТ-ГЕРОЙ',0,0);
+  ctx.strokeStyle='#2a1a4a'; ctx.lineWidth=2; ctx.strokeText('СКЕЙТ-ГЕРОЙ',0,0);
+  ctx.restore();
+  // колёса по бокам логотипа
+  for(const s of [-1,1]){
+    ctx.save(); ctx.translate(VW/2+s*330,cy-22); ctx.rotate(t*3*s);
+    ctx.fillStyle='#ffd166'; ctx.beginPath(); ctx.arc(0,0,22,0,7); ctx.fill();
+    ctx.strokeStyle='#b8860b'; ctx.lineWidth=4; ctx.stroke();
+    ctx.fillStyle='#8a5a1a'; ctx.beginPath(); ctx.arc(0,0,7,0,7); ctx.fill();
+    ctx.restore();
+  }
+  ctx.textAlign='center';
+  ctx.font='17px Rubik'; ctx.fillStyle='#ffd9a0';
+  ctx.fillText('платформер про человечка на доске',VW/2,cy+38);
+  ctx.globalAlpha=.55+.45*Math.sin(t*4);
+  ctx.font='22px "Russo One"'; ctx.fillStyle='#fff';
+  ctx.fillText('НАЖМИ ПРОБЕЛ',VW/2,cy+96);
+  ctx.globalAlpha=1;
+  panel(VW/2-260,cy+120,520,150);
+  ctx.font='15px Rubik'; ctx.fillStyle='#e8e2ff'; ctx.textAlign='left';
+  const lx=VW/2-235, rx=VW/2+20; let ly=cy+150;
+  const row=(x,y,k,v)=>{ ctx.fillStyle='#ffd166'; ctx.font='800 14px Rubik'; ctx.fillText(k,x,y);
+    ctx.fillStyle='#cfc8ea'; ctx.font='14px Rubik'; ctx.fillText(v,x+ctx.measureText(k).width+34-20,y); };
+  row(lx,ly,'← → / A D','ехать'); row(rx,ly,'ПРОБЕЛ / W','прыжок');
+  row(lx,ly+30,'S','трюк в воздухе (+150)'); row(rx,ly+30,'PERИЛА','запрыгни — грайнд!');
+  row(lx,ly+60,'ВРАГИ','прыгай им на голову'); row(rx,ly+60,'P / M','пауза / звук');
+  ctx.textAlign='center'; ctx.font='13px Rubik'; ctx.fillStyle='#8f86b8';
+  ctx.fillText('Собери колёса, доберись до финиша и не упади в пропасть!',VW/2,cy+252);
+  ctx.font='14px "Russo One"'; ctx.fillStyle='#ffd166';
+  ctx.fillText('РЕКОРД: '+best,VW/2,VH-28);
+}
+function drawPause(){ dim(.55);
+  ctx.textAlign='center';
+  ctx.font='52px "Russo One"'; ctx.fillStyle='#fff'; ctx.fillText('ПАУЗА',VW/2,VH/2-10);
+  ctx.font='16px Rubik'; ctx.fillStyle='#cfc8ea'; ctx.fillText('P — продолжить · R — заново',VW/2,VH/2+30);
+}
+function drawGameOver(){ dim(.6);
+  ctx.textAlign='center';
+  ctx.font='56px "Russo One"'; ctx.fillStyle='#ff5d5d';
+  ctx.fillText('ИГРА ОКОНЧЕНА',VW/2+3,VH/2-38+3);
+  ctx.fillStyle='#fff'; ctx.fillText('ИГРА ОКОНЧЕНА',VW/2,VH/2-38);
+  ctx.font='20px Rubik'; ctx.fillStyle='#ffd9a0';
+  ctx.fillText('Очки: '+score+'   ·   Рекорд: '+best,VW/2,VH/2+8);
+  ctx.globalAlpha=.6+.4*Math.sin(gameTime*4);
+  ctx.font='18px "Russo One"'; ctx.fillStyle='#fff';
+  ctx.fillText('ENTER — попробовать снова',VW/2,VH/2+56);
+  ctx.globalAlpha=1;
+}
+function drawWin(){ dim(.45);
+  panel(VW/2-230,110,460,300);
+  ctx.textAlign='center';
+  ctx.font='52px "Russo One"'; ctx.fillStyle='#ffd166';
+  ctx.fillText('ФИНИШ!',VW/2,172);
+  ctx.font='16px Rubik'; ctx.fillStyle='#e8e2ff';
+  const bonus=Math.round(timeLeft)*10+lives*500;
+  const lines=[
+    ['Очки за уровень',score-bonus],
+    ['Колёса собраны',wheelsGot+' / '+wheels.length],
+    ['Бонус времени + жизни','+'+bonus],
+  ];
+  let y=215;
+  for(const [k,v] of lines){
+    ctx.textAlign='left'; ctx.fillStyle='#cfc8ea'; ctx.fillText(k,VW/2-190,y);
+    ctx.textAlign='right'; ctx.fillStyle='#fff'; ctx.font='800 16px Rubik'; ctx.fillText(String(v),VW/2+190,y);
+    ctx.font='16px Rubik'; y+=32;
+  }
+  ctx.textAlign='center';
+  ctx.font='26px "Russo One"'; ctx.fillStyle='#3ddc84';
+  ctx.fillText('ИТОГ: '+score,VW/2,y+14);
+  if(score>=best){
+    ctx.globalAlpha=.6+.4*Math.sin(gameTime*6);
+    ctx.font='18px "Russo One"'; ctx.fillStyle='#ffd166';
+    ctx.fillText('★ НОВЫЙ РЕКОРД! ★',VW/2,y+50);
+    ctx.globalAlpha=1;
+  }
+  ctx.font='15px Rubik'; ctx.fillStyle='#cfc8ea';
+  ctx.fillText('ENTER / R — сыграть ещё раз',VW/2,y+84);
+}
+
+// ---------- РЕНДЕР ----------
+function render(){
+  drawSky();
+  ctx.save();
+  const shx=shake?rnd(-shake,shake):0, shy=shake?rnd(-shake,shake):0;
+  ctx.translate(Math.round(-cam.x+shx),Math.round(-cam.y+shy));
+  drawSigns();
+  drawPalms();
+  drawTiles();
+  drawWheels();
+  drawEnemies();
+  drawPlayer();
+  drawParticles();
+  drawFloats();
+  ctx.restore();
+  // виньетка
+  const vg=ctx.createRadialGradient(VW/2,VH/2,VH*.45,VW/2,VH/2,VH*.95);
+  vg.addColorStop(0,'rgba(0,0,0,0)'); vg.addColorStop(1,'rgba(20,8,40,.35)');
+  ctx.fillStyle=vg; ctx.fillRect(0,0,VW,VH);
+  if(flash>0){ ctx.fillStyle='rgba(255,60,60,'+(flash*.5)+')'; ctx.fillRect(0,0,VW,VH); }
+  if(state==='play'||state==='pause') drawHUD();
+  if(state==='title') drawTitle();
+  if(state==='pause') drawPause();
+  if(state==='gameover') drawGameOver();
+  if(state==='win') drawWin();
+}
+
+// ---------- ЦИКЛ ----------
+let last=performance.now(), acc=0;
+function loop(now){
+  requestAnimationFrame(loop);
+  let dt=(now-last)/1000; last=now;
+  if(dt>0.1) dt=0.1;
+  acc+=dt;
+  while(acc>=STEP){ update(STEP); acc-=STEP; }
+  render();
+}
+// polyfill roundRect на всякий случай
+if(!CanvasRenderingContext2D.prototype.roundRect){
+  CanvasRenderingContext2D.prototype.roundRect=function(x,y,w,h,r){
+    this.moveTo(x+r,y); this.arcTo(x+w,y,x+w,y+h,r); this.arcTo(x+w,y+h,x,y+h,r);
+    this.arcTo(x,y+h,x,y,r); this.arcTo(x,y,x+w,y,r); this.closePath(); return this;
+  };
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
